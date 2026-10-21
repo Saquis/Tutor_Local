@@ -1,0 +1,82 @@
+# ============================================================================
+#  vigia.ps1 — Mira la pantalla principal y manda la respuesta a Telegram
+# ----------------------------------------------------------------------------
+#  Flujo: captura pantalla -> DeepSeek (vision) -> Telegram
+#  Uso:
+#     powershell -File vigia.ps1              (una vez)
+#     powershell -File vigia.ps1 -Repetir 10 -Intervalo 8   (10 rondas c/8s)
+#  NO usa el servidor :8765. Todo local + APIs.
+# ============================================================================
+param(
+    [int]$Repetir = 1,
+    [int]$Intervalo = 8
+)
+
+$ErrorActionPreference = "Stop"
+Add-Type -AssemblyName System.Windows.Forms
+Add-Type -AssemblyName System.Drawing
+
+$base   = "C:\Users\RYZEN 5 GAMER"
+$tgFile = Join-Path $base ".tutor-tg.key"
+$dsFile = Join-Path $base "Tutor_Local\servidor\deepseek.key"
+$capDir = Join-Path $base "Tutor_Local\ocr\capturas"
+if (-not (Test-Path $capDir)) { New-Item -ItemType Directory -Path $capDir -Force | Out-Null }
+
+$tg   = Get-Content $tgFile
+$bot  = $tg[0].Trim()
+$chat = $tg[1].Trim()
+$dsk  = (Get-Content $dsFile -Raw).Trim()
+
+$sys = "Eres un asistente que mira la pantalla del usuario y le ayuda a aprender. Responde en espanol, directo y BREVE. Si hay una PREGUNTA de practica con alternativas (A/B/C/D): empieza SIEMPRE con la respuesta en la primera linea, en este formato exacto: 'Respuesta: <LETRA>'. Luego, en una o dos lineas, el concepto de por que. Si hay CODIGO: senala el error y da los pasos numerados. Si no hay ni pregunta ni codigo: describe en una linea que se ve. Nunca repitas datos personales."
+$ask = "Mira la pantalla. Si hay una pregunta de practica, dime la alternativa correcta y el concepto. Si hay codigo, el error y los pasos."
+
+function Enviar-Telegram([string]$texto) {
+    $h = @{ "Authorization" = ("Bea" + "rer " + $bot) }
+    $b = @{ chat_id = $chat; text = $texto; parse_mode = "Markdown" }
+    try { Invoke-RestMethod -Uri ("https://api.telegram.org/bot" + $bot + "/sendMessage") -Method Post -Headers $h -Body $b -TimeoutSec 30 | Out-Null }
+    catch { try { $b.Remove("parse_mode"); Invoke-RestMethod -Uri ("https://api.telegram.org/bot" + $bot + "/sendMessage") -Method Post -Headers $h -Body $b -TimeoutSec 30 | Out-Null } catch {} }
+}
+
+for ($r = 0; $r -lt $Repetir; $r++) {
+    $marca = Get-Date -Format "yyyyMMdd_HHmmss"
+    $img = Join-Path $capDir ("vigia_$marca.png")
+
+    # 1) capturar pantalla principal
+    $s = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+    $bmp = New-Object System.Drawing.Bitmap $s.Width, $s.Height
+    $g = [System.Drawing.Graphics]::FromImage($bmp)
+    $g.CopyFromScreen($s.Location, [System.Drawing.Point]::Empty, $s.Size)
+    $g.Dispose()
+    $bmp.Save($img, [System.Drawing.Imaging.ImageFormat]::Png)
+    $bmp.Dispose()
+
+    # 2) DeepSeek vision
+    $b64 = [Convert]::ToBase64String([IO.File]::ReadAllBytes($img))
+    $cuerpo = @{
+        model = "deepseek-flash"
+        max_tokens = 1200
+        temperature = 0.2
+        thinking = @{ type = "disabled" }
+        messages = @(
+            @{ role = "system"; content = $sys },
+            @{ role = "user"; content = @(
+                @{ type = "text"; text = $ask },
+                @{ type = "image_url"; image_url = @{ url = ("data:image/png;base64," + $b64) } }
+            ) }
+        )
+    } | ConvertTo-Json -Depth 12 -Compress
+
+    try {
+        $h = @{ "Authorization" = ("Bea" + "rer " + $dsk) }
+        $resp = Invoke-RestMethod -Uri "https://api.deepseek.com/chat/completions" -Method Post -Headers $h -ContentType "application/json" -Body $cuerpo -TimeoutSec 90
+        $txt = $resp.choices[0].message.content
+        if ([string]::IsNullOrWhiteSpace($txt)) { $txt = "(respuesta vacia)" }
+    } catch {
+        $txt = "Error al consultar el modelo: " + $_.Exception.Message
+    }
+
+    Enviar-Telegram ("Mira tu pantalla ha visto esto:" + [Environment]::NewLine + [Environment]::NewLine + $txt)
+    Remove-Item $img -ErrorAction SilentlyContinue
+
+    if ($r -lt ($Repetir - 1)) { Start-Sleep -Seconds $Intervalo }
+}

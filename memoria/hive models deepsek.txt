@@ -1,0 +1,15 @@
+{
+  "statement": [
+    {
+      "key": "models",
+      "action": [
+        "hive:CallApi"
+      ],
+      "effect": "Allow",
+      "resource": [
+        "hive:models:sf1:::v3/*",
+        "hive:models:va1:::v3/*"
+      ]
+    }
+  ]
+}

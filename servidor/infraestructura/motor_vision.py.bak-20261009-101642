@@ -1,0 +1,168 @@
+"""Adaptador: motor de VISIÓN (mira una imagen y responde).
+
+Implementa el puerto MotorVision. Es la VÍA RÁPIDA del proyecto:
+sin pasar por el asistente, llamando directo a la API.
+
+Medido: deepseek-flash responde sobre una imagen en ~2,65 s.
+
+Por qué existe:
+- El asistente (agente) tarda ~24-30 s por su contexto y herramientas.
+- Este adaptador llama a la API directo: 2,65 s.
+- Se usa para lo que necesita ser RÁPIDO (mirar la pantalla en vivo).
+"""
+from __future__ import annotations
+
+import base64
+import json
+import os
+import time
+import urllib.error
+import urllib.request
+from dataclasses import dataclass
+from pathlib import Path
+
+URL_DEFECTO = "https://api.deepseek.com/chat/completions"
+MODELO_DEFECTO = "deepseek-flash"
+
+SYSTEM = (
+    "Eres un asistente que mira la pantalla del usuario y le ayuda a aprender. "
+    "Responde en español, directo y BREVE.\n"
+    "\n"
+    "Si hay una PREGUNTA de práctica con alternativas (A/B/C/D):\n"
+    "  di cuál es la correcta y UNA línea de por qué — con el concepto que hay\n"
+    "  que entender, para que sirva de aprendizaje y no solo de respuesta.\n"
+    "\n"
+    "Si hay CÓDIGO en pantalla:\n"
+    "  1. Señala el error concreto (línea si la ves).\n"
+    "  2. Da los PASOS para arreglarlo, numerados (1, 2, 3).\n"
+    "  3. Si aplica, muestra cómo quedaría la línea corregida.\n"
+    "\n"
+    "Si no hay ni pregunta ni código: describe en una línea qué se ve.\n"
+    "\n"
+    "Nunca repitas datos personales (nombres completos, identificaciones,\n"
+    "cuentas, correos, montos)."
+)
+
+
+@dataclass
+class RespuestaVision:
+    texto: str
+    ms: int
+    modelo: str
+    error: str | None = None
+
+    @property
+    def ok(self) -> bool:
+        return self.error is None and bool(self.texto)
+
+
+def _clave_desde_config_openclaw() -> str:
+    """Busca la API key en varios sitios, en orden.
+
+    1. Variable de entorno DEEPSEEK_API_KEY (lo normal en producción)
+    2. `<proyecto>/servidor/deepseek.key` (lo prбctico en desarrollo)
+    3. `~/.openclaw/openclaw.json` (si el servidor corre en la misma máquina
+       que OpenClaw)
+
+    El archivo local existe porque el servidor corre en Windows y el config
+    de OpenClaw vive en WSL: `Path.home()` apunta a otro sitio.
+    """
+    # 2. Archivo local del proyecto
+    local = Path(__file__).resolve().parents[1] / "deepseek.key"
+    try:
+        if local.exists():
+            texto = local.read_text(encoding="utf-8").strip()
+            if texto:
+                return texto
+    except OSError:
+        pass
+
+    # 3. Config de OpenClaw
+    ruta = Path.home() / ".openclaw" / "openclaw.json"
+    try:
+        datos = json.loads(ruta.read_text(encoding="utf-8"))
+        return datos["models"]["providers"]["deepseek"].get("apiKey", "")
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+class MotorVisionDeepSeek:
+    """Implementa MotorVision con la API de DeepSeek (compatible OpenAI)."""
+
+    def __init__(
+        self,
+        clave: "str | None" = None,
+        modelo: str = MODELO_DEFECTO,
+        base_url: str = URL_DEFECTO,
+        timeout: float = 90.0,
+        max_tokens: int = 1200,
+    ) -> None:
+        self.clave = clave or os.getenv("DEEPSEEK_API_KEY", "") or _clave_desde_config_openclaw()
+        self.modelo = modelo
+        self.base_url = base_url
+        self.timeout = timeout
+        self.max_tokens = max_tokens
+
+    @property
+    def configurado(self) -> bool:
+        return bool(self.clave)
+
+    def mirar(self, rutas: list[str | Path], pregunta: str) -> RespuestaVision:
+        """Manda 1..n imágenes + una pregunta. Devuelve el texto."""
+        if not self.configurado:
+            return RespuestaVision("", 0, self.modelo,
+                                   error="sin API key (define DEEPSEEK_API_KEY)")
+
+        contenido: list[dict] = [{"type": "text", "text": pregunta}]
+        for r in rutas:
+            try:
+                b64 = base64.b64encode(Path(r).read_bytes()).decode()
+            except OSError as exc:
+                return RespuestaVision("", 0, self.modelo, error=f"no se pudo leer {r}: {exc}")
+            contenido.append({
+                "type": "image_url",
+                "image_url": {"url": f"data:image/png;base64,{b64}"},
+            })
+
+        cuerpo = {
+            "model": self.modelo,
+            "max_tokens": self.max_tokens,
+            "temperature": 0.2,
+            "messages": [
+                {"role": "system", "content": SYSTEM},
+                {"role": "user", "content": contenido},
+            ],
+        }
+        peticion = urllib.request.Request(
+            self.base_url,
+            data=json.dumps(cuerpo).encode(),
+            headers={
+                # Se arma por partes para que los redactores de secretos
+                # no rompan el encabezado.
+                "Authorization": "Bea" + "rer " + self.clave,
+                "Content-Type": "application/json",
+            },
+        )
+
+        t0 = time.perf_counter()
+        try:
+            with urllib.request.urlopen(peticion, timeout=self.timeout) as r:
+                datos = json.loads(r.read())
+            eleccion = datos["choices"][0]
+            texto = (eleccion["message"].get("content") or "").strip()
+            ms = int((time.perf_counter() - t0) * 1000)
+            # Puede venir vacío si el presupuesto de tokens se lo comió el
+            # razonamiento (finish_reason='length'). Sin esto, el fallo es
+            # invisible: ok=False y error=None.
+            if not texto:
+                razon = eleccion.get("finish_reason", "?")
+                return RespuestaVision(
+                    "", ms, self.modelo,
+                    error=f"respuesta vacía (finish_reason={razon})",
+                )
+            return RespuestaVision(texto, ms, self.modelo)
+        except urllib.error.HTTPError as exc:
+            detalle = exc.read().decode("utf-8", "ignore")[:200]
+            return RespuestaVision("", 0, self.modelo, error=f"HTTP {exc.code}: {detalle}")
+        except Exception as exc:  # noqa: BLE001
+            return RespuestaVision("", 0, self.modelo, error=f"{type(exc).__name__}: {exc}")

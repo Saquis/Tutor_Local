@@ -1,0 +1,14 @@
+==============================================================
+  MEDICION DE LATENCIA
+==============================================================
+
+[1] Misma leccion (deberia venir de CACHE):
+  cache hit                    HTTP 200  ->  0.43 s  (servidor: 0 ms)
+
+[2] Leccion nueva (deberia GENERAR con phi3):
+  cache miss                   HTTP 200  ->  89.30 s  (servidor: 88707 ms)
+
+[3] La nueva repetida (deberia ser CACHE):
+  cache hit (repetida)         HTTP 200  ->  0.62 s  (servidor: 0 ms)
+
+==============================================================

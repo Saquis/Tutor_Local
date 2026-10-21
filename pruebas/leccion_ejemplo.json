@@ -1,0 +1,7 @@
+{
+  "url": "https://ejemplo.local/leccion/indices-sql",
+  "titulo": "Indices en bases de datos",
+  "texto": "Un indice es una estructura auxiliar que acelera la busqueda de filas en una tabla. Sin indice, el motor recorre la tabla completa fila por fila. Con indice, salta directamente a las filas relevantes, igual que el indice alfabetico de un libro evita leer todas las paginas. La mayoria de los motores usan arboles B o B+ porque mantienen los datos ordenados y permiten busquedas en tiempo logaritmico. El costo es doble: ocupa espacio en disco y ralentiza las escrituras, porque cada INSERT o UPDATE debe actualizar tambien el indice. Por eso se crean indices solo en columnas que se consultan con frecuencia, especialmente las que aparecen en WHERE, JOIN y ORDER BY. Un indice compuesto cubre varias columnas y solo sirve si la consulta usa un prefijo de esas columnas.",
+  "seleccion": "",
+  "live": true
+}

@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Vista — mirar pantalla</title>
+<style>
+  :root {
+    --fondo: #0f1117; --panel: #171a23; --borde: #262b38;
+    --texto: #e6e9ef; --suave: #8b93a7; --acento: #5b8cff;
+    --ok: #4ade80; --error: #ff6b6b;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 20px; background: var(--fondo); color: var(--texto);
+    font: 16px/1.55 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+    max-width: 1100px; margin-inline: auto;
+  }
+  header { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; flex-wrap: wrap; }
+  h1 { font-size: 17px; margin: 0; }
+  .punto { width: 9px; height: 9px; border-radius: 50%; background: var(--suave); }
+  .punto.vivo { background: var(--ok); }
+  .punto.error { background: var(--error); }
+  #estado { color: var(--suave); font-size: 13px; }
+  .botones { margin-left: auto; display: flex; gap: 8px; align-items: center; }
+  button {
+    background: var(--panel); color: var(--texto); border: 1px solid var(--borde);
+    border-radius: 8px; padding: 7px 14px; font-size: 14px; cursor: pointer;
+  }
+  button:hover { border-color: var(--acento); }
+  select {
+    background: var(--panel); color: var(--texto); border: 1px solid var(--borde);
+    border-radius: 8px; padding: 7px 10px; font-size: 14px;
+  }
+  #respuesta {
+    background: var(--panel); border: 1px solid var(--borde); border-radius: 12px;
+    padding: 22px 26px; font-size: 20px; line-height: 1.6; white-space: pre-wrap;
+    min-height: 180px;
+  }
+  #respuesta.vacio { color: var(--suave); font-size: 15px; font-style: italic; }
+  #pie { margin-top: 12px; color: var(--suave); font-size: 13px; display: flex; gap: 18px; flex-wrap: wrap; }
+  .error { color: var(--error); }
+</style>
+</head>
+<body>
+
+<header>
+  <span class="punto" id="punto"></span>
+  <h1>Vista</h1>
+  <span id="estado">listo</span>
+  <div class="botones">
+    <select id="cada">
+      <option value="0">manual</option>
+      <option value="5000" selected>cada 5 s</option>
+      <option value="3000">cada 3 s</option>
+      <option value="10000">cada 10 s</option>
+    </select>
+    <button id="btn">Mirar ahora</button>
+  </div>
+</header>
+
+<div id="respuesta" class="vacio">Pulsa «Mirar ahora» o espera el primer ciclo…</div>
+
+<div id="pie">
+  <span id="tiempos">—</span>
+  <span id="cuenta">0 miradas</span>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+const punto = $("punto"), estado = $("estado"), respuesta = $("respuesta");
+const tiempos = $("tiempos"), cuenta = $("cuenta"), cada = $("cada"), btn = $("btn");
+
+let temporizador = null;
+let miradas = 0;
+let ocupado = false;
+let anterior = "";
+
+async function mirar() {
+  if (ocupado) return;
+  ocupado = true;
+  punto.classList.add("vivo");
+  estado.textContent = "mirando…";
+
+  try {
+    const r = await fetch("/vista", { cache: "no-store" });
+    const d = await r.json();
+
+    if (!d.ok) {
+      punto.classList.add("error");
+      respuesta.classList.add("vacio");
+      if (d.pausado) {
+        punto.classList.remove("error");
+        respuesta.innerHTML = "<b>⏸ en pausa</b> — no se consulta al modelo (no consume)";
+        estado.textContent = "en pausa";
+      } else {
+        respuesta.innerHTML = '<span class="error">' + (d.error || "error") + "</span>";
+        estado.textContent = "error";
+      }
+    } else {
+      punto.classList.remove("error");
+      respuesta.classList.remove("vacio");
+      // Solo repinta si cambió: evita parpadeo
+      if (d.texto !== anterior) {
+        respuesta.textContent = d.texto;
+        anterior = d.texto;
+      }
+      estado.textContent = "al día";
+    }
+
+    miradas++;
+    cuenta.textContent = miradas + " miradas";
+    tiempos.textContent =
+      "total " + d.ms_total + " ms · captura " + d.ms_captura +
+      " ms · visión " + d.ms_vision + " ms · " + d.pantallas + " pantalla(s)";
+  } catch (e) {
+    punto.classList.add("error");
+    estado.textContent = "sin conexión";
+  } finally {
+    ocupado = false;
+    punto.classList.remove("vivo");
+  }
+}
+
+function programar() {
+  if (temporizador) clearInterval(temporizador);
+  const ms = parseInt(cada.value, 10);
+  if (ms > 0) temporizador = setInterval(mirar, ms);
+}
+
+btn.addEventListener("click", mirar);
+cada.addEventListener("change", () => { programar(); if (parseInt(cada.value, 10) > 0) mirar(); });
+
+programar();
+mirar();
+</script>
+</body>
+</html>

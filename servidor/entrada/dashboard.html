@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tutor Local</title>
+<style>
+  :root {
+    --fondo: #0f1117; --panel: #171a23; --borde: #262b38;
+    --texto: #e6e9ef; --suave: #8b93a7; --acento: #5b8cff; --error: #ff6b6b;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 24px; background: var(--fondo); color: var(--texto);
+    font: 15px/1.6 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+    max-width: 860px; margin-inline: auto;
+  }
+  h1 { font-size: 19px; margin: 0 0 4px; }
+  .sub { color: var(--suave); font-size: 13px; margin-bottom: 20px; }
+  .tarjeta {
+    background: var(--panel); border: 1px solid var(--borde);
+    border-radius: 10px; padding: 16px; margin-bottom: 14px;
+  }
+  .tarjeta h2 {
+    font-size: 12px; text-transform: uppercase; letter-spacing: .08em;
+    color: var(--suave); margin: 0 0 10px; font-weight: 600;
+  }
+  #estado { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--suave); }
+  .punto { width: 8px; height: 8px; border-radius: 50%; background: var(--error); }
+  .punto.vivo { background: #4ade80; }
+  #resumen { white-space: pre-wrap; min-height: 40px; }
+  .pregunta { border: 1px solid var(--borde); border-radius: 8px; padding: 12px; margin: 10px 0; }
+  .pregunta b { display: block; margin-bottom: 8px; }
+  .opcion { padding: 3px 0; color: var(--suave); }
+  details { margin-top: 8px; }
+  summary { cursor: pointer; color: var(--acento); font-size: 13px; }
+  .porque { margin-top: 8px; padding-left: 10px; border-left: 2px solid var(--acento); color: var(--suave); font-size: 13px; }
+  .error { color: var(--error); }
+  .vacio { color: var(--suave); font-style: italic; }
+</style>
+</head>
+<body>
+
+<h1>Tutor Local</h1>
+<div class="sub">Sensor pasivo · resumen en streaming · preguntas en segundo plano</div>
+
+<div class="tarjeta">
+  <div id="estado"><span class="punto" id="punto"></span><span id="estadoTexto">conectando…</span></div>
+</div>
+
+<div class="tarjeta">
+  <h2>Resumen</h2>
+  <div id="resumen" class="vacio">Abre una lección y pulsa Ctrl+Shift+S</div>
+</div>
+
+<div class="tarjeta">
+  <h2>Preguntas de práctica</h2>
+  <div id="preguntas" class="vacio">Se generan en segundo plano…</div>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? "").replace(/[&<>"']/g,
+  c => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[c]));
+
+const punto = $("punto"), estadoTexto = $("estadoTexto");
+const resumen = $("resumen"), preguntas = $("preguntas");
+
+resumen.classList.add("vacio");
+
+const fuente = new EventSource("/events");
+
+fuente.onopen = () => {
+  punto.classList.add("vivo");
+  estadoTexto.textContent = "conectado";
+};
+
+fuente.onerror = () => {
+  punto.classList.remove("vivo");
+  estadoTexto.textContent = "reconectando…";
+};
+
+fuente.onmessage = e => {
+  let m;
+  try { m = JSON.parse(e.data); } catch { return; }
+
+  if (m.type === "hola") return;
+
+  if (m.type === "status") {
+    estadoTexto.textContent = m.msg || "";
+    if (m.reset) {
+      resumen.textContent = "";
+      resumen.classList.remove("vacio");
+      preguntas.innerHTML = "";
+      preguntas.classList.add("vacio");
+      preguntas.textContent = "Se generan en segundo plano…";
+    }
+    return;
+  }
+
+  if (m.type === "token") {
+    resumen.classList.remove("vacio");
+    resumen.textContent += m.texto;
+    return;
+  }
+
+  if (m.type === "resumen") {
+    resumen.classList.remove("vacio");
+    resumen.textContent = m.texto;
+    estadoTexto.textContent = m.desde_cache ? "desde caché ⚡" : "listo";
+    return;
+  }
+
+  if (m.type === "preguntas") {
+    const lista = m.preguntas || [];
+    if (!lista.length) { preguntas.textContent = "No se pudieron generar."; return; }
+    preguntas.classList.remove("vacio");
+    preguntas.innerHTML = lista.map((p, i) => {
+      const ops = (p.opciones || []).map((o, j) =>
+        `<div class="opcion">${String.fromCharCode(65 + j)}. ${esc(o)}</div>`).join("");
+      const letra = String.fromCharCode(65 + (p.respuesta || 0));
+      return `<div class="pregunta"><b>${i + 1}. ${esc(p.enunciado)}</b>${ops}
+        <details><summary>ver respuesta</summary>
+          <div class="porque">${letra}. ${esc(p.porque || "")}</div>
+        </details></div>`;
+    }).join("");
+    return;
+  }
+
+  if (m.type === "error") {
+    estadoTexto.innerHTML = `<span class="error">${esc(m.msg)}</span>`;
+  }
+};
+</script>
+</body>
+</html>

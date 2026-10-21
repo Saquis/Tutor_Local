@@ -1,0 +1,29 @@
+# Dependencias
+node_modules/
+venv/
+__pycache__/
+*.pyc
+
+# Datos locales
+*.db
+*.sqlite
+*.sqlite3
+study.db
+
+# Secretos
+.env
+*.key
+*.pem
+
+# Sistema
+.DS_Store
+Thumbs.db
+servidor/deepseek.key
+
+# Secretos — NUNCA subir
+.env
+.env.local
+*.key
+**/config.js
+Tutor_Local/servidor/deepseek.key
+*.bak-token
